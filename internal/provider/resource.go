@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 
 	"github.com/AdamJacobMuller/terraform-provider-sealedsecret/internal/k8s"
 	"github.com/AdamJacobMuller/terraform-provider-sealedsecret/internal/kubeseal"
@@ -18,6 +19,7 @@ import (
 
 const (
 	name          = "name"
+	scope         = "scope"
 	namespace     = "namespace"
 	secretType    = "type"
 	data          = "data"
@@ -51,6 +53,7 @@ type sealedSecretResource struct{}
 type sealedSecretModel struct {
 	Name         types.String `tfsdk:"name"`
 	Namespace    types.String `tfsdk:"namespace"`
+	Scope        types.String `tfsdk:"scope"`
 	SecretType   types.String `tfsdk:"type"`
 	StringData   types.Map    `tfsdk:"string_data"`
 	Data         types.Map    `tfsdk:"data"`
@@ -73,6 +76,11 @@ func (r *sealedSecretResource) GetSchema(_ context.Context) (tfsdk.Schema, diag.
 				Type:        types.StringType,
 				Required:    true,
 				Description: "name of the secret, must be unique",
+			},
+			scope: {
+				Type:        types.StringType,
+				Optional:    true,
+				Description: "Set the scope of the sealed secret: strict, namespace-wide, cluster-wide",
 			},
 			namespace: {
 				Type:        types.StringType,
@@ -105,6 +113,7 @@ func (r *sealedSecretResource) GetSchema(_ context.Context) (tfsdk.Schema, diag.
 				Sensitive:   true,
 				Description: "Key/value pairs to populate the secret.",
 			},
+
 			"public_key": {
 				Type:        types.StringType,
 				Required:    true,
@@ -152,7 +161,12 @@ func (r *sealedSecretResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	sealedSecret, err := createSealedSecret(ctx, plan.Name.Value, plan.Namespace.Value, plan.SecretType.Value, plan.PublicKey.Value, data, stringData)
+	scope := plan.Scope.Value
+	if scope == "" {
+		scope = "strict"
+	}
+
+	sealedSecret, err := createSealedSecret(ctx, plan.Name.Value, plan.Namespace.Value, scope, plan.SecretType.Value, plan.PublicKey.Value, data, stringData)
 	if err != nil {
 		diags.AddError("Failed to seal secret", err.Error())
 		return
@@ -191,7 +205,12 @@ func (r *sealedSecretResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	sealedSecret, err := createSealedSecret(ctx, plan.Name.Value, plan.Namespace.Value, plan.SecretType.Value, plan.PublicKey.Value, data, stringData)
+	scope := plan.Scope.Value
+	if scope == "" {
+		scope = "strict"
+	}
+
+	sealedSecret, err := createSealedSecret(ctx, plan.Name.Value, plan.Namespace.Value, scope, plan.SecretType.Value, plan.PublicKey.Value, data, stringData)
 	if err != nil {
 		diags.AddError("Failed to seal secret", err.Error())
 		return
@@ -207,11 +226,21 @@ func (r *sealedSecretResource) Delete(ctx context.Context, req resource.DeleteRe
 	return
 }
 
-func createSealedSecret(ctx context.Context, name, namespace, secretType, publicKey string, data, stringData map[string]string) ([]byte, error) {
+func createSealedSecret(ctx context.Context, name, namespace, scope, secretType, publicKey string, data, stringData map[string]string) ([]byte, error) {
 	rawSecret := k8s.SecretManifest{
-		Name:      name,
-		Namespace: namespace,
-		Type:      secretType,
+		Name:        name,
+		Namespace:   namespace,
+		Type:        secretType,
+		Annotations: make(map[string]string),
+	}
+	tflog.Error(ctx, fmt.Sprintf("scope is %s", scope))
+	if scope == "namespace-wide" {
+		rawSecret.Annotations["sealedsecrets.bitnami.com/namespace-wide"] = "true"
+	} else if scope == "cluster-wide" {
+		rawSecret.Annotations["sealedsecrets.bitnami.com/cluster-wide"] = "true"
+	} else if scope == "strict" {
+	} else {
+		return nil, fmt.Errorf("scope must be one of namespace-wide, cluster-wide, strict or null (default=struct, given %s)", scope)
 	}
 
 	rawSecret.Data = make(map[string]interface{})

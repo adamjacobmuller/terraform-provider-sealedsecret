@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"html/template"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -19,6 +18,12 @@ metadata:
   creationTimestamp: null
   name: {{ .Name }}
   namespace: {{ .Namespace }}
+  {{ if .Annotations }}
+  annotations:
+    {{- range $key, $value := .Annotations }}
+    {{ $key }}: "{{ $value -}}"
+    {{ end }}
+  {{ end }}
 {{ if .Data }}
 data:
   {{- range $key, $value := .Data }}
@@ -31,14 +36,16 @@ stringData:
   {{ $key }}: {{ $value -}}
   {{ end }}
 {{ end }}
-type: {{ .Type }}`
+type: {{ .Type }}
+`
 
 type SecretManifest struct {
-	Name       string
-	Namespace  string
-	Type       string
-	Data       map[string]interface{}
-	StringData map[string]string
+	Name        string
+	Namespace   string
+	Type        string
+	Data        map[string]interface{}
+	StringData  map[string]string
+	Annotations map[string]string
 }
 
 var ErrEmptyData = errors.New("secret manifest Data and StringData cannot be empty")
@@ -53,14 +60,6 @@ func CreateSecret(sm *SecretManifest) (v1.Secret, error) {
 		sm.Data = b64EncodeMapValue(sm.Data)
 	}
 	secretManifestYAML := new(bytes.Buffer)
-
-	t, err := template.New("secretManifestTmpl").Parse(secretManifestTmpl)
-	if err != nil {
-		return v1.Secret{}, err
-	}
-	if err := t.Execute(secretManifestYAML, sm); err != nil {
-		return v1.Secret{}, err
-	}
 
 	var secret v1.Secret
 	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), secretManifestYAML.Bytes(), &secret); err != nil {
