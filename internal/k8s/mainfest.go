@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html/template"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -60,6 +61,14 @@ func CreateSecret(sm *SecretManifest) (v1.Secret, error) {
 		sm.Data = b64EncodeMapValue(sm.Data)
 	}
 	secretManifestYAML := new(bytes.Buffer)
+
+	t, err := template.New("secretManifestTmpl").Parse(secretManifestTmpl)
+	if err != nil {
+		return v1.Secret{}, err
+	}
+	if err := t.Execute(secretManifestYAML, sm); err != nil {
+		return v1.Secret{}, err
+	}
 
 	var secret v1.Secret
 	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), secretManifestYAML.Bytes(), &secret); err != nil {
